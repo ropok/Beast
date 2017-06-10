@@ -1,3 +1,9 @@
+Version 55:
+
+* Add Beast CMake interface target
+
+--------------------------------------------------------------------------------
+
 Version 54:
 
 * static_buffer coverage
