@@ -238,7 +238,7 @@ open(error_code& ec,
     if(ec)
         return;
     acceptor_.async_accept(sock_, ep_,
-        std::bind(&port::on_accept, shared_from_this(),
+        std::bind(&port::on_accept, this->shared_from_this(),
             std::placeholders::_1));
 }
 
@@ -272,7 +272,7 @@ on_accept(error_code ec)
         handler_.on_accept(
             instance_.next_id(), std::move(sock_), ep_);
     acceptor_.async_accept(sock_, ep_,
-        std::bind(&port::on_accept, shared_from_this(),
+        std::bind(&port::on_accept, this->shared_from_this(),
             std::placeholders::_1));
 }
 
