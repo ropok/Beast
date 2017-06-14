@@ -114,7 +114,7 @@ run()
                 "Server", "async_echo_server");
         },
         strand_.wrap(std::bind(&connection::on_accept,
-            shared_from_this(), std::placeholders::_1)));
+            this->shared_from_this(), std::placeholders::_1)));
 }
 
 template<class _>
@@ -135,8 +135,8 @@ connection::
 do_read()
 {
     ws_.async_read(buffer_, strand_.wrap(
-        std::bind(&connection::on_read, shared_from_this(),
-            std::placeholders::_1)));
+        std::bind(&connection::on_read,
+            this->shared_from_this(), std::placeholders::_1)));
 }
         
 template<class _>
@@ -154,8 +154,8 @@ on_read(error_code ec)
     ws_.binary(ws_.got_binary());
 
     ws_.async_write(buffer_.data(), strand_.wrap(
-        std::bind(&connection::on_write, shared_from_this(),
-            std::placeholders::_1)));
+        std::bind(&connection::on_write,
+            this->shared_from_this(), std::placeholders::_1)));
 }
 
 template<class _>
