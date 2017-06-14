@@ -87,7 +87,6 @@ private:
         connection& operator=(connection&&) = delete;
         connection& operator=(connection const&) = delete;
 
-        template<class... Args>
         explicit
         connection(websocket_echo_async_server& server,
                 endpoint_type const& ep, socket_type&& sock)
@@ -175,6 +174,132 @@ private:
     do_accept(socket_type&& sock, endpoint_type ep)
     {
         std::make_shared<connection>(*this, ep, std::move(sock))->run();
+    }
+};
+
+class ws_async_echo_port
+{
+    using socket_type = boost::asio::ip::tcp::socket;
+
+    using endpoint_type = boost::asio::ip::tcp::endpoint;
+
+    using error_code = boost::system::error_code;
+
+    using on_new_stream_cb  =
+        std::function<void(beast::websocket::stream<socket_type>&)>;
+
+    std::ostream& log_;
+    on_new_stream_cb cb_;
+
+    class connection
+        : public std::enable_shared_from_this<connection>
+    {
+        int state = 0;
+        ws_async_echo_port& handler_;
+        endpoint_type ep_;
+        beast::websocket::stream<socket_type> ws_;
+        boost::asio::io_service::strand strand_;
+        beast::multi_buffer buffer_;
+        std::size_t id_;
+
+    public:
+        connection(connection&&) = default;
+        connection(connection const&) = default;
+        connection& operator=(connection&&) = delete;
+        connection& operator=(connection const&) = delete;
+
+        explicit
+        connection(ws_async_echo_port& handler, std::size_t id,
+                endpoint_type const& ep, socket_type&& sock)
+            : handler_(handler)
+            , ep_(ep)
+            , ws_(std::move(sock))
+            , strand_(ws_.get_io_service())
+            , id_(id)
+        {
+            handler_.cb_(ws_);
+        }
+
+        void
+        run()
+        {
+            ws_.async_accept_ex(
+                [](beast::websocket::response_type& res)
+                {
+                    res.insert(
+                        "Server", "async_echo_server");
+                },
+                strand_.wrap(std::bind(&connection::on_accept,
+                    shared_from_this(), std::placeholders::_1)));
+        }
+
+        void
+        on_accept(error_code ec)
+        {
+            if(ec)
+                return fail("async_accept", ec);
+            do_read();
+        }
+
+        void
+        do_read()
+        {
+            ws_.async_read(buffer_, strand_.wrap(
+                std::bind(&connection::on_read, shared_from_this(),
+                    std::placeholders::_1)));
+        }
+        
+        void
+        on_read(error_code ec)
+        {
+            if(ec == beast::websocket::error::closed)
+                return;
+
+            if(ec)
+                return fail("on_read", ec);
+
+            ws_.binary(ws_.got_binary());
+
+            ws_.async_write(buffer_.data(), strand_.wrap(
+                std::bind(&connection::on_write, shared_from_this(),
+                    std::placeholders::_1)));
+        }
+
+        void
+        on_write(error_code ec)
+        {
+            if(ec)
+                return fail("on_write", ec);
+
+            buffer_.consume(buffer_.size());
+
+            do_read();
+        }
+
+    private:
+        void
+        fail(std::string what, error_code ec)
+        {
+            if(ec != beast::websocket::error::closed)
+                handler_.log_ <<
+                    "[#" << id_ << " " << ep_ << "] " <<
+                what << ": " << ec.message() << std::endl;
+        }
+    };
+
+public:
+    ws_async_echo_port(std::ostream& log, on_new_stream_cb cb)
+        : log_(log)
+        , cb_(cb)
+    {
+    }
+
+    void
+    operator()(std::size_t id,
+        socket_type&& sock, endpoint_type ep)
+    {
+        std::make_shared<connection>(
+            *this, id, ep, std::move(sock))->run();
     }
 };
 

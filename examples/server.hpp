@@ -24,16 +24,20 @@ class server
 {
     class port_base
     {
+    public:
         virtual ~port_base() = default;
         virtual void close() = 0;
     };
 
-    template<class AcceptHandler>
+    template<class PortHandler>
     class port;
 
     boost::asio::io_service ios_;
     std::vector<std::thread> threads_;
     boost::optional<boost::asio::io_service::work> work_;
+    boost::asio::ip::tcp::socket sock_;
+    boost::asio::ip::tcp::endpoint ep_;
+    boost::asio::ip::tcp::acceptor acceptor_;
 
 protected:
     using error_code = boost::system::error_code;
@@ -71,6 +75,14 @@ public:
         return acceptor_.local_endpoint();
     }
 
+    /// Return a new, small integer unique id
+    std::size_t
+    next_id()
+    {
+        static std::atomic<std::size_t> id_{0};
+        return ++id_;
+    }
+
     /** Open a listening port.
 
         @param ep The address and port to bind to.
@@ -87,10 +99,18 @@ public:
         );
         @endcode
     */
-    template<class AcceptHandler>
+    template<
+        class PortHandler,
+        class... Args>
+    std::shared_ptr<PortHandler>
+    make_port(
+        error_code& ec,
+        boost::asio::ip::tcp::endpoint const& ep,
+        Args&&... args);
+
     void
     open(boost::asio::ip::tcp::endpoint const& ep,
-        error_code& ec, AcceptHandler&& handler);
+        error_code& ec);
 
     /** Stop the server.
     */
@@ -113,27 +133,43 @@ private:
 
 //------------------------------------------------------------------------------
 
-template<class AcceptHandler>
-class server::port : public port_base
+template<class Derived>
+template<class PortHandler>
+class server<Derived>::port
+    : public port_base
+    , public std::enable_shared_from_this<port<PortHandler>>
 {
     server& s_;
-    AcceptHandler hander_;
+    PortHandler handler_;
+    boost::asio::io_service::strand strand_;
     boost::asio::ip::tcp::socket sock_;
-    boost::asio::ip::tcp::endpoint ep_;
     boost::asio::ip::tcp::acceptor acceptor_;
+    boost::asio::ip::tcp::endpoint ep_;
 
 public:
-    template<class DeducedHandler>
-    port(server& s, DeducedHandler&& handler)
+    template<class... Args>
+    port(server& s, Args&&... args)
         : s_(s)
-        , handler_(std::forward<DeducedHandler>(handler))
+        , handler_(std::forward<Args>(args)...)
+        , strand_(s_.get_io_service())
         , sock_(s_.get_io_service())
-        , acceptor(s_.get_io_service())
+        , acceptor_(s_.get_io_service())
     {
     }
 
+    ~port()
+    {
+    }
+
+    PortHandler&
+    handler()
+    {
+        return handler_;
+    }
+
     void
-    open(boost::asio::ip::tcp::endpoint const& ep)
+    open(error_code& ec,
+        boost::asio::ip::tcp::endpoint const& ep)
     {
         acceptor_.open(ep.protocol(), ec);
         if(ec)
@@ -148,7 +184,7 @@ public:
         if(ec)
             return;
         acceptor_.async_accept(sock_, ep_,
-            std::bind(&server::on_accept, this,
+            std::bind(&port::on_accept, shared_from_this(),
                 std::placeholders::_1));
     }
 
@@ -168,9 +204,9 @@ private:
         if(ec == boost::asio::error::operation_aborted)
             return;
         if(! ec)
-            handler_(std::move(sock_), ep_);
+            handler_(s_.next_id(), std::move(sock_), ep_);
         acceptor_.async_accept(sock_, ep_,
-            std::bind(&server::on_accept, this,
+            std::bind(&port::on_accept, shared_from_this(),
                 std::placeholders::_1));
     }
 };
@@ -208,6 +244,24 @@ server<Derived>::
         });
     for(auto& t : threads_)
         t.join();
+}
+
+template<class Derived>
+template<class PortHandler, class... Args>
+std::shared_ptr<PortHandler>
+server<Derived>::
+make_port(error_code& ec,
+    boost::asio::ip::tcp::endpoint const& ep,
+    Args&&... args)
+{
+    auto sp = std::make_shared<port<PortHandler>>(
+        *this, std::forward<Args>(args)...);
+    sp->open(ec, ep);
+    if(ec)
+        return nullptr;
+    return std::shared_ptr<PortHandler>{
+        sp, &sp->handler()};
+
 }
 
 template<class Derived>
