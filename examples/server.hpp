@@ -108,10 +108,6 @@ public:
         boost::asio::ip::tcp::endpoint const& ep,
         Args&&... args);
 
-    void
-    open(boost::asio::ip::tcp::endpoint const& ep,
-        error_code& ec);
-
     /** Stop the server.
     */
     // VFALCO This could take a timeout parameter if the timeout
@@ -126,9 +122,6 @@ private:
     {
         return static_cast<Derived&>(*this);
     }
-
-    void
-    on_accept(error_code ec);
 };
 
 //------------------------------------------------------------------------------
@@ -262,32 +255,6 @@ make_port(error_code& ec,
     return std::shared_ptr<PortHandler>{
         sp, &sp->handler()};
 
-}
-
-template<class Derived>
-void
-server<Derived>::
-open(boost::asio::ip::tcp::endpoint const& ep,
-    error_code& ec)
-{
-    boost::asio::ip::tcp::acceptor acceptor{ios_};
-    acceptor.open(ep.protocol(), ec);
-    if(ec)
-        return;
-    acceptor.set_option(
-        boost::asio::socket_base::reuse_address{true});
-    acceptor.bind(ep, ec);
-    if(ec)
-        return;
-    acceptor.listen(
-        boost::asio::socket_base::max_connections, ec);
-    if(ec)
-        return;
-    using std::swap;
-    swap(acceptor, acceptor_);
-    acceptor_.async_accept(sock_, ep_,
-        std::bind(&server::on_accept, this,
-            std::placeholders::_1));
 }
 
 template<class Derived>
