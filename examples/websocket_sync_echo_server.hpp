@@ -20,11 +20,11 @@
 #include <type_traits>
 #include <utility>
 
-class ws_sync_echo_port
+namespace server {
+
+template<class = void>
+class ws_sync_echo_port_impl
 {
-    using socket_type = boost::asio::ip::tcp::socket;
-    using endpoint_type = boost::asio::ip::tcp::endpoint;
-    using error_code = boost::system::error_code;
     using on_new_stream_cb = std::function<
         void(beast::websocket::stream<socket_type>&)>;
 
@@ -32,27 +32,27 @@ class ws_sync_echo_port
     on_new_stream_cb cb_;
 
 public:
-    ws_sync_echo_port(std::ostream& log, on_new_stream_cb cb)
+    ws_sync_echo_port_impl(std::ostream& log, on_new_stream_cb cb)
         : log_(log)
         , cb_(cb)
     {
     }
 
     void
-    operator()(std::size_t id,
+    on_accept(std::size_t id,
         socket_type&& sock, endpoint_type ep)
     {
         struct lambda
         {
             std::size_t id;
             endpoint_type ep;
-            ws_sync_echo_port& self;
+            ws_sync_echo_port_impl& self;
             boost::asio::io_service::work work;
             // Must be destroyed before work otherwise the
             // io_service could be destroyed before the socket.
             socket_type sock;
 
-            lambda(ws_sync_echo_port& self_,
+            lambda(ws_sync_echo_port_impl& self_,
                 endpoint_type const& ep_,
                     socket_type&& sock_)
                 : id([]
@@ -119,5 +119,9 @@ private:
         
     }
 };
+
+} // server
+
+using ws_sync_echo_port = server::ws_sync_echo_port_impl<>;
 
 #endif

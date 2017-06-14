@@ -51,8 +51,6 @@ public:
 int main()
 {
     using namespace beast::websocket;
-    using endpoint_type = boost::asio::ip::tcp::endpoint;
-    using address_type = boost::asio::ip::address;
 
     beast::error_code ec;
 
@@ -61,19 +59,23 @@ int main()
     pmd.server_enable = true;
     pmd.compLevel = 3;
 
-    websocket_echo_async_server s{std::cout, 1};
+    server::instance s{1};
 
     s.make_port<ws_async_echo_port>(
         ec,
-        endpoint_type{address_type::from_string("127.0.0.1"), 1000 },
+        server::endpoint_type{
+            server::address_type::from_string("127.0.0.1"), 1000},
         std::cout,
         set_stream_options{pmd});
 
     s.make_port<ws_sync_echo_port>(
         ec,
-        endpoint_type{address_type::from_string("127.0.0.1"), 1001 },
+        server::endpoint_type{
+            server::address_type::from_string("127.0.0.1"), 1001},
         std::cout,
         set_stream_options{pmd});
 
     sig_wait();
+
+    s.stop();
 }

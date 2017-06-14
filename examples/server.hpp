@@ -17,10 +17,17 @@
 #include <type_traits>
 #include <utility>
 
-/** A server that accepts TCP/IP connections.
+namespace server {
+
+using error_code = boost::system::error_code;
+using socket_type = boost::asio::ip::tcp::socket;
+using address_type = boost::asio::ip::address_v4;
+using endpoint_type = boost::asio::ip::tcp::endpoint;
+
+/** A server instance that accepts TCP/IP connections.
 */
-template<class Derived>
-class server
+template<class = void>
+class instance_impl
 {
     class port_base
     {
@@ -34,20 +41,12 @@ class server
 
     boost::asio::io_service ios_;
     std::vector<std::thread> threads_;
+    std::vector<std::shared_ptr<port_base>> ports_;
     boost::optional<boost::asio::io_service::work> work_;
-    boost::asio::ip::tcp::socket sock_;
-    boost::asio::ip::tcp::endpoint ep_;
-    boost::asio::ip::tcp::acceptor acceptor_;
-
-protected:
-    using error_code = boost::system::error_code;
-    using socket_type = boost::asio::ip::tcp::socket;
 
 public:
-    using endpoint_type = boost::asio::ip::tcp::endpoint;
-
-    server(server const&) = delete;
-    server& operator=(server const&) = delete;
+    instance_impl(instance_impl const&) = delete;
+    instance_impl& operator=(instance_impl const&) = delete;
 
     /** Constructor
 
@@ -55,12 +54,12 @@ public:
         which must be greater than zero.
     */
     explicit
-    server(std::size_t n = 1);
+    instance_impl(std::size_t n = 1);
 
     /// Destructor
-    ~server();
+    ~instance_impl();
 
-    /// Return the `io_service` associated with the server
+    /// Return the `io_service` associated with the instance_impl
     boost::asio::io_service&
     get_io_service()
     {
@@ -83,77 +82,69 @@ public:
         return ++id_;
     }
 
-    /** Open a listening port.
-
-        @param ep The address and port to bind to.
+    /** Create a listening port.
 
         @param ec Set to the error, if any occurred.
 
-        @param handler The handler to associate with the listening
-        port, which will be copied or moved. The handler must have
-        this equivalent signature:
+        @param ep The address and port to bind to.
+
+        @param args Optional arguments, forwarded to the
+        port handler's constructor.
+
+        @tparam PortHandler The port handler to use for handling
+        incoming connections on this port. This handler must meet
+        the requirements of @b PortHandler. A model of PortHandler
+        is as follows:
+
         @code
-        void handler(
-            socket_type&& sock,     // The accepted socket
-            endpoint_type ep        // The remote endpoint
-        );
+
+        struct PortHandler
+        {
+            void
+            on_accept(
+                std::size_t id,         // a small, unique id for the connection
+                socket_type&& sock,     // the connected socket
+                endpoint_type ep        // address of the remote endpoint
+            );
+        };
+
         @endcode
     */
     template<
         class PortHandler,
         class... Args>
-    std::shared_ptr<PortHandler>
+    void
     make_port(
         error_code& ec,
         boost::asio::ip::tcp::endpoint const& ep,
         Args&&... args);
 
-    /** Stop the server.
+    /** Stop the instance.
     */
-    // VFALCO This could take a timeout parameter if the timeout
-    //        expires then close the connections. Of course this
-    //        requires that the server manage I/O objects...
     void
     stop();
-
-private:
-    Derived&
-    impl()
-    {
-        return static_cast<Derived&>(*this);
-    }
 };
 
 //------------------------------------------------------------------------------
 
-template<class Derived>
+template<class _>
 template<class PortHandler>
-class server<Derived>::port
+class instance_impl<_>::port
     : public port_base
     , public std::enable_shared_from_this<port<PortHandler>>
 {
-    server& s_;
+    instance_impl& instance_;
     PortHandler handler_;
     boost::asio::io_service::strand strand_;
-    boost::asio::ip::tcp::socket sock_;
     boost::asio::ip::tcp::acceptor acceptor_;
+    boost::asio::ip::tcp::socket sock_;
     boost::asio::ip::tcp::endpoint ep_;
 
 public:
     template<class... Args>
-    port(server& s, Args&&... args)
-        : s_(s)
-        , handler_(std::forward<Args>(args)...)
-        , strand_(s_.get_io_service())
-        , sock_(s_.get_io_service())
-        , acceptor_(s_.get_io_service())
-    {
-    }
+    port(instance_impl& instance, Args&&... args);
 
-    ~port()
-    {
-    }
-
+    ~port();
     PortHandler&
     handler()
     {
@@ -162,56 +153,103 @@ public:
 
     void
     open(error_code& ec,
-        boost::asio::ip::tcp::endpoint const& ep)
-    {
-        acceptor_.open(ep.protocol(), ec);
-        if(ec)
-            return;
-        acceptor_.set_option(
-            boost::asio::socket_base::reuse_address{true});
-        acceptor_.bind(ep, ec);
-        if(ec)
-            return;
-        acceptor_.listen(
-            boost::asio::socket_base::max_connections, ec);
-        if(ec)
-            return;
-        acceptor_.async_accept(sock_, ep_,
-            std::bind(&port::on_accept, shared_from_this(),
-                std::placeholders::_1));
-    }
+        boost::asio::ip::tcp::endpoint const& ep);
 
     void
-    close() override
-    {
-        error_code ec;
-        acceptor_.close(ec);
-    }
+    close() override;
 
 private:
     void
-    on_accept(error_code ec)
-    {
-        if(! acceptor_.is_open())
-            return;
-        if(ec == boost::asio::error::operation_aborted)
-            return;
-        if(! ec)
-            handler_(s_.next_id(), std::move(sock_), ep_);
-        acceptor_.async_accept(sock_, ep_,
-            std::bind(&port::on_accept, shared_from_this(),
-                std::placeholders::_1));
-    }
+    on_accept(error_code ec);
 };
+
+template<class _>
+template<class PortHandler>
+template<class... Args>
+instance_impl<_>::
+port<PortHandler>::
+port(instance_impl& instance, Args&&... args)
+    : instance_(instance)
+    , handler_(std::forward<Args>(args)...)
+    , strand_(instance_.get_io_service())
+    , acceptor_(instance_.get_io_service())
+    , sock_(instance_.get_io_service())
+{
+}
+
+template<class _>
+template<class PortHandler>
+instance_impl<_>::
+port<PortHandler>::
+~port()
+{
+}
+
+template<class _>
+template<class PortHandler>
+void
+instance_impl<_>::
+port<PortHandler>::
+open(error_code& ec,
+    boost::asio::ip::tcp::endpoint const& ep)
+{
+    acceptor_.open(ep.protocol(), ec);
+    if(ec)
+        return;
+    acceptor_.set_option(
+        boost::asio::socket_base::reuse_address{true});
+    acceptor_.bind(ep, ec);
+    if(ec)
+        return;
+    acceptor_.listen(
+        boost::asio::socket_base::max_connections, ec);
+    if(ec)
+        return;
+    acceptor_.async_accept(sock_, ep_,
+        std::bind(&port::on_accept, shared_from_this(),
+            std::placeholders::_1));
+}
+
+template<class _>
+template<class PortHandler>
+void
+instance_impl<_>::
+port<PortHandler>::
+close()
+{
+    if(! strand_.running_in_this_thread())
+        acceptor_.get_io_service().post(
+            strand_.wrap(std::bind(&port::close,
+                this)));
+    error_code ec;
+    acceptor_.close(ec);
+}
+
+template<class _>
+template<class PortHandler>
+void
+instance_impl<_>::
+port<PortHandler>::
+on_accept(error_code ec)
+{
+    if(! acceptor_.is_open())
+        return;
+    if(ec == boost::asio::error::operation_aborted)
+        return;
+    if(! ec)
+        handler_.on_accept(
+            instance_.next_id(), std::move(sock_), ep_);
+    acceptor_.async_accept(sock_, ep_,
+        std::bind(&port::on_accept, shared_from_this(),
+            std::placeholders::_1));
+}
 
 //------------------------------------------------------------------------------
 
-template<class Derived>
-server<Derived>::
-server(std::size_t n)
-    : sock_(ios_)
-    , acceptor_(ios_)
-    , work_(ios_)
+template<class _>
+instance_impl<_>::
+instance_impl(std::size_t n)
+    : work_(ios_)
 {
     if(n < 1)
         throw std::invalid_argument{"threads < 1"};
@@ -224,25 +262,20 @@ server(std::size_t n)
             });
 }
 
-template<class Derived>
-server<Derived>::
-~server()
+template<class _>
+instance_impl<_>::
+~instance_impl()
 {
     work_ = boost::none;
-    ios_.dispatch(
-        [&]
-        {
-            error_code ec;
-            acceptor_.close(ec);
-        });
+    stop();
     for(auto& t : threads_)
         t.join();
 }
 
-template<class Derived>
+template<class _>
 template<class PortHandler, class... Args>
-std::shared_ptr<PortHandler>
-server<Derived>::
+void
+instance_impl<_>::
 make_port(error_code& ec,
     boost::asio::ip::tcp::endpoint const& ep,
     Args&&... args)
@@ -251,40 +284,29 @@ make_port(error_code& ec,
         *this, std::forward<Args>(args)...);
     sp->open(ec, ep);
     if(ec)
-        return nullptr;
+        return;
+    ports_.emplace_back(std::move(sp));
+    /*
     return std::shared_ptr<PortHandler>{
         sp, &sp->handler()};
-
+    */
 }
 
-template<class Derived>
+// VFALCO This could take a timeout parameter if the timeout
+//        expires then close the connections. Of course this
+//        requires that the instance_impl manage I/O objects...
+template<class _>
 void
-server<Derived>::
+instance_impl<_>::
 stop()
 {
-    ios_.post(
-        [&]()
-        {
-            error_code ec;
-            acceptor_.close(ec);
-        });
+    for(auto const& port : ports_)
+        port->close();
+    ports_.clear();
 }
 
-template<class Derived>
-void
-server<Derived>::
-on_accept(error_code ec)
-{
-    if(! acceptor_.is_open())
-        return;
-    if(ec == boost::asio::error::operation_aborted)
-        return;
-    if(! ec)
-        impl().do_accept(std::move(sock_), ep_);
-    acceptor_.async_accept(sock_, ep_,
-        std::bind(&server::on_accept, this,
-            std::placeholders::_1));
-}
+using instance = instance_impl<>;
 
+} // server
 
 #endif

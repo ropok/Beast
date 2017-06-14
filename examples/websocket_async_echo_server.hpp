@@ -19,11 +19,11 @@
 #include <type_traits>
 #include <utility>
 
-class ws_async_echo_port
+namespace server {
+
+template<class = void>
+class ws_async_echo_port_impl
 {
-    using socket_type = boost::asio::ip::tcp::socket;
-    using endpoint_type = boost::asio::ip::tcp::endpoint;
-    using error_code = boost::system::error_code;
     using on_new_stream_cb = std::function<
         void(beast::websocket::stream<socket_type>&)>;
 
@@ -34,7 +34,7 @@ class ws_async_echo_port
         : public std::enable_shared_from_this<connection>
     {
         int state = 0;
-        ws_async_echo_port& handler_;
+        ws_async_echo_port_impl& handler_;
         endpoint_type ep_;
         beast::websocket::stream<socket_type> ws_;
         boost::asio::io_service::strand strand_;
@@ -48,7 +48,7 @@ class ws_async_echo_port
         connection& operator=(connection const&) = delete;
 
         explicit
-        connection(ws_async_echo_port& handler, std::size_t id,
+        connection(ws_async_echo_port_impl& handler, std::size_t id,
                 endpoint_type const& ep, socket_type&& sock)
             : handler_(handler)
             , ep_(ep)
@@ -127,19 +127,23 @@ class ws_async_echo_port
     };
 
 public:
-    ws_async_echo_port(std::ostream& log, on_new_stream_cb cb)
+    ws_async_echo_port_impl(std::ostream& log, on_new_stream_cb cb)
         : log_(log)
         , cb_(cb)
     {
     }
 
     void
-    operator()(std::size_t id,
+    on_accept(std::size_t id,
         socket_type&& sock, endpoint_type ep)
     {
         std::make_shared<connection>(
             *this, id, ep, std::move(sock))->run();
     }
 };
+
+} // server
+
+using ws_async_echo_port = server::ws_async_echo_port_impl<>;
 
 #endif
