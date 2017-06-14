@@ -47,7 +47,7 @@ unit-test core-tests :
 
 exe examples :
     examples/main.cpp
-    examples/async_server.cpp
+    examples/server.cpp
     ;
 
 unit-test http-tests :

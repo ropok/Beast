@@ -73,13 +73,9 @@ on_accept(std::size_t id,
         socket_type sock;
 
         lambda(ws_sync_echo_port_impl& self_,
-            endpoint_type const& ep_,
+            std::size_t id_, endpoint_type const& ep_,
                 socket_type&& sock_)
-            : id([]
-                {
-                    static std::atomic<std::size_t> n{0};
-                    return ++n;
-                }())
+            : id(id_)
             , ep(ep_)
             , self(self_)
             , work(sock_.get_io_service())
@@ -92,7 +88,8 @@ on_accept(std::size_t id,
             self.do_connection(id, ep, std::move(sock));
         }
     };
-    std::thread{lambda{*this, ep, std::move(sock)}}.detach();
+    std::thread{lambda{
+        *this, id, ep, std::move(sock)}}.detach();
 }
 
 template<class _>
