@@ -25,6 +25,39 @@ using address_type = boost::asio::ip::address_v4;
 using endpoint_type = boost::asio::ip::tcp::endpoint;
 
 /** A server instance that accepts TCP/IP connections.
+
+    This is a general purpose TCP/IP server which contains
+    zero or more user defined "ports". Each port represents
+    a listening socket whose behavior is defined by an
+    instance of the @b PortHandler concept.
+
+    To use the server, construct the class and then add the
+    ports that you want using @ref make_port.
+
+    @par Example
+
+    @code
+
+    // Create a server with 4 threads 
+    //
+    server::instance si(4);
+
+    // Create a port that echoes everything back.
+    // Bind all available interfaces on port 1000.
+    //
+    server::error_code ec;
+    si.make_port<echo_port>(
+        ec,
+        server::endpoint_type{
+            server::address_type::from_string("0.0.0.0"), 1000}
+    );
+
+    ...
+
+    // Close all connections, shut down the server
+    si.stop();
+
+    @endcode
 */
 template<class = void>
 class instance_impl
@@ -56,7 +89,11 @@ public:
     explicit
     instance_impl(std::size_t n = 1);
 
-    /// Destructor
+    /** Destructor
+
+        The destructor will block until all asynchronous I/O
+        has completed.
+    */
     ~instance_impl();
 
     /// Return the `io_service` associated with the instance_impl
@@ -64,14 +101,6 @@ public:
     get_io_service()
     {
         return ios_;
-    }
-
-    /** Return the listening endpoint.
-    */
-    boost::asio::ip::tcp::endpoint
-    local_endpoint() const
-    {
-        return acceptor_.local_endpoint();
     }
 
     /// Return a new, small integer unique id
@@ -120,6 +149,9 @@ public:
         Args&&... args);
 
     /** Stop the instance.
+
+        This function call returns immediately. Connections
+        are stopped on the corresponding `io_service` threads.
     */
     void
     stop();
